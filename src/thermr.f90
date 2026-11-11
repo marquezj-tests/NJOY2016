@@ -1608,7 +1608,8 @@ contains
    real(kr),parameter::unity=1.0e0_kr
    real(kr),parameter::sabflg=-225.e0_kr
    real(kr),parameter::sabzer=-1.e30_kr
-   real(kr),parameter::lnzer=-999.e0_kr
+   real(kr),parameter::lnzer=-1.e29_kr
+   real(kr),parameter::lnold=-999.e0_kr
    real(kr),parameter::eps=1.e-4_kr
    real(kr),parameter::tolmin=5.e-7_kr
    real(kr),parameter::half=0.5e0_kr
@@ -1715,7 +1716,8 @@ contains
    !--read s(alpha,beta) data into memory.
    !--keep ln S for every nonzero value (small values on the energy-loss
    !--side give finite cross sections after the exp(-beta/2) factor);
-   !--zeros (and leapr's -999 marker for ln S) are flagged with sabzer
+   !--zeros are flagged with sabzer (ln S: leapr writes -1e30 for S=0,
+   !--older versions -999)
    ib=1
    beta(ib)=b
   120 continue
@@ -1755,7 +1757,7 @@ contains
          endif
       else
          sab(ia,ib)=scr(l)
-         if (scr(l).le.lnzer) sab(ia,ib)=sabzer
+         if (scr(l).le.lnzer.or.scr(l).eq.lnold) sab(ia,ib)=sabzer
       endif
       if (t.eq.t1) l=l+1
       l=l+1

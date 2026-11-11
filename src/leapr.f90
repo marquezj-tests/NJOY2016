@@ -3349,7 +3349,7 @@ contains
    real(kr)::z(17)
    equivalence(t(1),z(1))
    real(kr),parameter::small=1.e-9_kr
-   real(kr),parameter::tiny=-999.e0_kr
+   real(kr),parameter::tiny=-1.e30_kr   ! ln S marker for S=0 (ilog=1)
    real(kr),parameter::tol=0.9e-7_kr
    real(kr),parameter::up=1.01e0_kr
    real(kr),parameter::therm=.0253e0_kr
