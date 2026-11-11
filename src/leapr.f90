@@ -48,7 +48,7 @@ module leapm
    real(kr),dimension(:),allocatable::tempf,tempf1
 
    ! min phonon expansion for time warning message
-   integer,parameter,public::maxnphon=10000
+   integer,parameter,public::maxnphon=250
 
    ! largest step in ln(s) between beta nodes for which ln(s) is
    ! interpolated quadratically in sbfill and sint (as in thermr)
@@ -1032,86 +1032,47 @@ contains
    ! This routine returns the -beta side of
    ! the asymmetric S(alpha,beta).
    ! Called by trans.
-   ! Uses besk1.
+   ! Uses sdiff.
    !--------------------------------------------------------------------
    use mainio ! provide nsyso
-   use physics ! provides pi
    ! externals
    integer::nsd,iprt,nu,ndmax
-   real(kr)::al,delta,check0,check1,f,bb,sfree
+   real(kr)::al,delta,check0,check1,f,bb
    real(kr)::ap(ndmax),sd(ndmax)
    ! internals
    integer::i,j,idone,icheck
-   real(kr)::d,c2,c3,c4,c5,c6,c7,c8,be,ex,wal
-   real(kr),parameter::quart=0.25e0_kr
+   real(kr)::be
    real(kr),parameter::eps=1.e-7_kr
    real(kr),parameter::zero=0
-   real(kr),parameter::one=1
    icheck=0
 
-   !--diffusion branch
-   if (c.ne.zero) then
-      if (iprt.eq.1.and.iprint.eq.2) write(nsyso,&
-        '(/4(4x,''beta'',4x,''ssdiff(-beta)''))')
-      d=twt*c
-      c2=sqrt(c*c+quart)
-      c3=2*d*al
-      c4=c3*c3
-      c8=c2*c3/pi
-      c3=2*d*c*al
-      be=0
-      j=1
-      idone=0
-      do while (idone.eq.0)
-         c6=sqrt(be*be+c4)
-         c7=c6*c2
-         if (c7.le.one) c5=c8*exp(c3+be/2)
-         if (c7.gt.one) then
-            c5=0
-            ex=c3-c7+be/2
-            c5=c8*exp(ex)
-         endif
-         sd(j)=c5*besk1(c7)/c6
-         ap(j)=be
-         be=be+delta
-         j=j+1
-         if (mod(j,2).eq.0) then
-            if (j.ge.ndmax) idone=1
-            if (eps*sd(1).ge.sd(j-1)) idone=1
-         endif
-      enddo
-      j=j-1
-      nsd=j
-      if (iprt.eq.1.and.iprint.eq.2)&
-        write(nsyso,'(0pf10.5,1pe15.7,0pf10.5,1pe15.7,0pf10.5,&
-        &1pe15.7,0pf10.5,1pe15.7)') (ap(i),sd(i),i=1,j,nu)
-
-   !--free-gas branch
-   else
-      if (iprt.eq.1.and.iprint.eq.2) write(nsyso,&
-        '(/4(4x,''beta'',4x,''ssfree(-beta)''))')
-      be=0
-      j=1
-      wal=twt*al
-      idone=0
-      do while (idone.eq.0)
-         ex=-(wal-be)**2/(4*wal)
-         sfree=exp(ex)/sqrt(4*pi*wal)
-         sd(j)=sfree
-         ap(j)=be
-         be=be+delta
-         j=j+1
-         if (mod(j,2).eq.0) then
-            if (j.ge.ndmax) idone=1
-            if (eps*sd(1).ge.sd(j-1)) idone=1
-         endif
-      enddo
-      j=j-1
-      nsd=j
-      if (iprt.eq.1.and.iprint.eq.2)&
-        write(nsyso,'(0pf10.5,1pe15.7,0pf10.5,1pe15.7,0pf10.5,&
-        &1pe15.7,0pf10.5,1pe15.7)') (ap(i),sd(i),i=1,j,nu)
+   if (iprt.eq.1.and.iprint.eq.2) then
+      if (c.ne.zero) then
+         write(nsyso,'(/4(4x,''beta'',4x,''ssdiff(-beta)''))')
+      else
+         write(nsyso,'(/4(4x,''beta'',4x,''ssfree(-beta)''))')
+      endif
    endif
+
+   !--diffusion (c>0) or free-gas (c=0) law on the beta grid
+   be=0
+   j=1
+   idone=0
+   do while (idone.eq.0)
+      sd(j)=sdiff(al,be)
+      ap(j)=be
+      be=be+delta
+      j=j+1
+      if (mod(j,2).eq.0) then
+         if (j.ge.ndmax) idone=1
+         if (eps*sd(1).ge.sd(j-1)) idone=1
+      endif
+   enddo
+   j=j-1
+   nsd=j
+   if (iprt.eq.1.and.iprint.eq.2)&
+     write(nsyso,'(0pf10.5,1pe15.7,0pf10.5,1pe15.7,0pf10.5,&
+     &1pe15.7,0pf10.5,1pe15.7)') (ap(i),sd(i),i=1,j,nu)
 
    !--check the moments of the distribution
    if (iprt.ne.1.or.iprint.ne.2) return
@@ -1137,9 +1098,12 @@ contains
 
    real(kr) function sdiff(al,be)
    !--------------------------------------------------------------------
-   ! Diffusion (or free-gas) scattering law at one value of beta, with
-   ! the expressions used to tabulate sd in stable.
-   ! Called by trans for beta beyond the tabulated kernel.
+   ! Diffusion (Egelstaff-Schofield, c>0) or free-gas (c=0) scattering
+   ! law for the translational weight twt, at one value of alpha and
+   ! beta (-beta side of the asymmetric S(alpha,beta)).
+   ! Called by stable to tabulate sd, and by trans for beta beyond
+   ! the tabulated kernel.
+   ! Uses besk1.
    !--------------------------------------------------------------------
    use physics ! provides pi
    real(kr)::al,be
@@ -1412,7 +1376,7 @@ contains
    ! Uses bfact, bfill, exts, sint.
    !--------------------------------------------------------------------
    use mainio  ! provides nsyso
-   use util    ! provides timer
+   use util    ! provides timer,mess
    use physics ! provides bk (boltzmann constant)
    ! externals
    integer::itemp
@@ -1425,9 +1389,9 @@ contains
    integer::jj,nn,jprt,nbx,maxbb,maxdd
    real(kr)::bdeln(50),eb(50),dbw(50),ar(50),dist(50)
    real(kr)::bzero,bplus(50),bminus(50)
-   real(kr),dimension(:),allocatable::betan,exb,sexpb,sctpb
-   integer::nsctc
-   real(kr)::bsctc,fsctc
+   real(kr),dimension(:),allocatable::betan,exb,sexpb
+   integer::nfull
+   character(60)::strng
    real(kr),dimension(:),allocatable::bex,rdbex,sex
    real(kr),dimension(:),allocatable::bes,wts,ben,wtn
    real(kr),parameter::therm=.0253e0_kr
@@ -1448,10 +1412,7 @@ contains
    allocate(betan(nbeta))
    allocate(exb(nbeta))
    allocate(sexpb(nbeta))
-   allocate(sctpb(nbeta))
-   nsctc=0
-   bsctc=huge(bsctc)
-   fsctc=0
+   nfull=0
    maxbb=2*nbeta+1
    allocate(bex(maxbb))
    allocate(rdbex(maxbb))
@@ -1588,6 +1549,9 @@ contains
       enddo
       n=nn
 
+      !--count the alpha values where lines were dropped at maxdd
+      if (n.ge.maxdd) nfull=nfull+1
+
       !--sort the discrete lines
       !--and throw out the smallest ones
       nn=n-1
@@ -1618,33 +1582,14 @@ contains
       endif
 
       !--add the continuum part to the scattering law
-      do j=1,nbeta
-         sctpb(j)=0
-      enddo
       do m=1,n
          do j=1,nbeta
             be=-betan(j)-bes(m)
             st=sint(be,bex,rdbex,sex,nbx,al,tbeta+twt,tbart,betan,&
               nbeta,maxbb)
             add=wts(m)*st
-            if (add.ge.tiny) then
-               sexpb(j)=sexpb(j)+add
-               if (abs(be).gt.betan(nbeta)) sctpb(j)=sctpb(j)+add
-            endif
+            if (add.ge.tiny) sexpb(j)=sexpb(j)+add
          enddo
-      enddo
-
-      !--cells where the sct continuation of sint contributes
-      do j=1,nbeta
-         if (sctpb(j).gt.1.e-6_kr*sexpb(j)) then
-            nsctc=nsctc+1
-            if (betan(j).lt.bsctc) bsctc=betan(j)
-            if (sctpb(j)/sexpb(j).gt.fsctc) fsctc=sctpb(j)/sexpb(j)
-            if (iprint.eq.2) write(nsyso,'(&
-              &''      sct contribution: alpha='',1p,e12.5,&
-              &'' beta='',e12.5,'' fraction='',e10.3)')&
-              al,betan(j),sctpb(j)/sexpb(j)
-         endif
       enddo
 
       !--add the delta functions to the scattering law
@@ -1755,18 +1700,12 @@ contains
    deallocate(sex)
    deallocate(rdbex)
    deallocate(bex)
-   if (nsctc.eq.0) then
-      write(nsyso,'(/'' cells with sct contributions'',&
-        &'' from beyond the beta grid: none'')')
-   else
-      write(nsyso,'(/'' cells with sct contributions'',&
-        &'' from beyond the beta grid:'',i8/&
-        &''    smallest beta ...................... '',1p,e12.4/&
-        &''    largest fraction ................... '',e12.4)')&
-        nsctc,bsctc,fsctc
+   if (nfull.gt.0) then
+      write(strng,'(''discrete lines reached maxdd at'',i5,'' alpha values'')')&
+        nfull
+      call mess('discre',strng,'lines with the smallest weights were dropped')
    endif
    deallocate(sexpb)
-   deallocate(sctpb)
    deallocate(exb)
    deallocate(betan)
    return
@@ -2053,6 +1992,7 @@ contains
       else
          ex=-(wt*alph-abs(x))**2/(4*wt*alph*tbart)
          if (x.gt.zero) ex=ex-x
+         ! SCT with correct Gaussian width
          sv=exp(ex)/sqrt(4*pi*wt*alph*tbart)
       endif
       sint=sv
