@@ -11,6 +11,7 @@ module leapm
    integer::nout
    integer::iprint
    integer::nphon
+   integer::iext
    integer::mat
    real(kr)::smin
    real(kr)::za
@@ -48,7 +49,16 @@ module leapm
    real(kr),dimension(:),allocatable::tempf,tempf1
 
    ! min phonon expansion for time warning message
-   integer,parameter,public::maxnphon=250
+   integer,parameter,public::maxnphon=10000
+
+   ! cutoffs of the phonon expansion (contin, convol, trans, bfact) and
+   ! of the discrete-oscillator lines (discre); set by iext in leapr
+   real(kr)::tinyph,tinyd,smalld
+   integer::maxddx
+
+   ! iext=1: largest step in ln(s) between beta nodes for which ln(s)
+   ! is interpolated quadratically in sbfill and sint (as in thermr)
+   real(kr),parameter::qstep=2.e0_kr
 
 contains
 
@@ -130,6 +140,14 @@ contains
    !    ntempr  number of temperatures (def=1)
    !    iprint  print control (0=min, 1=more, 2=most, def=1)
    !    nphon   phonon-expansion order (def=100)
+   !    iext    extended options (def=0)
+   !             0  standard calculation
+   !             1  for scattering laws without zeros up to large
+   !                alpha and beta: smaller cutoffs in the phonon
+   !                expansion and discrete oscillators, quadratic
+   !                interpolation of ln(s) in the convolutions, and a
+   !                report of short-collision-time contributions
+   !                from beyond the beta grid in discre
    !
    ! card 4 - endf output control
    !    mat     endf mat number
@@ -244,7 +262,19 @@ contains
    ntempr=1
    iprint=1
    nphon=100
-   read(nsysi,*) ntempr,iprint,nphon
+   iext=0
+   read(nsysi,*) ntempr,iprint,nphon,iext
+   if (iext.eq.1) then
+      tinyph=1.e-200_kr
+      tinyd=1.e-200_kr
+      smalld=1.e-150_kr
+      maxddx=200000
+   else
+      tinyph=1.e-30_kr
+      tinyd=1.e-20_kr
+      smalld=1.e-8_kr
+      maxddx=500
+   endif
    isabt=0
    ilog=0
    smin=1.0e-75_kr
@@ -253,12 +283,13 @@ contains
      &  '' no. of temperatures .................. '',i10/&
      &  '' print flag ........................... '',i10/&
      &  '' phonon-expansion order ............... '',i10/&
+     &  '' extended options ..................... '',i10/&
      &  '' endf mat number ...................... '',i10/&
      &  '' za ................................... '',i10/&
      &  '' isabt ................................ '',i10/&
      &  '' ilog ................................. '',i10/&
      &  '' smin.................. ............... '',es10.3)')&
-     &  ntempr,iprint,nphon,mat,nint(za),isabt,ilog,smin
+     &  ntempr,iprint,nphon,iext,mat,nint(za),isabt,ilog,smin
    if (isabt.ne.0) write(nsyso,'(/&
      &''*** Warning.  isabt=1 pendf tapes CANNOT be processed '',&
      &''by the NJOY THERMR module ***'')')
@@ -473,9 +504,11 @@ contains
    real(kr)::ff0,ff1,ff2,ff1l,ff2l,sum0,sum1
    real(kr),dimension(:),allocatable::p,tlast,tnow,xa
    real(kr),parameter::therm=0.0253e0_kr
-   real(kr),parameter::tiny=1.e-30_kr
+   real(kr)::tiny
    real(kr),parameter::explim=-250.e0_kr
    real(kr),parameter::zero=0
+
+   tiny=tinyph
 
    !--write heading
    write(nsyso,'(/'' solid-type contributions to scattering law'')')
@@ -802,10 +835,20 @@ contains
    real(kr)::delta,ckk
    real(kr)::t1(n1),tlast(nl),tnext(nn)
    ! internals
-   integer::j,k,i1,i2
+   integer::j,k,i1,i2,m
    real(kr)::f1,f2,cc,be
-   real(kr),parameter::tiny=1.e-30_kr
+   real(kr),dimension(:),allocatable::ex
+   real(kr)::tiny
    real(kr),parameter::zero=0
+
+   tiny=tinyph
+
+   !--table of exp(-m*delta), evaluated as in the loops below
+   allocate(ex(max(n1,nn)+1))
+   do m=0,max(n1,nn)
+      be=m*delta
+      ex(m+1)=exp(-be)
+   enddo
 
    ckk=0
    do k=1,nn
@@ -814,15 +857,13 @@ contains
          i1=k+j-2
          i2=k-j
          f1=0
-         be=(j-1)*delta
          if (t1(j).gt.zero) then
-            if (i1+1.le.nl) f1=tlast(i1+1)*exp(-be)
+            if (i1+1.le.nl) f1=tlast(i1+1)*ex(j)
             f2=0
             if (i2.ge.0.and.i2+1.le.nl) then
                f2=tlast(i2+1)
             else if (i2.lt.0.and.1-i2.le.nl) then
-               be=-i2*delta
-               f2=tlast(1-i2)*exp(-be)
+               f2=tlast(1-i2)*ex(1-i2)
             endif
             cc=t1(j)*(f1+f2)
             if (j.eq.1.or.j.eq.n1) cc=cc/2
@@ -832,12 +873,12 @@ contains
       tnext(k)=tnext(k)*delta
       if (tnext(k).lt.tiny) tnext(k)=0
       cc=tnext(k)
-      be=(k-1)*delta
-      cc=cc+tnext(k)*exp(-be)
+      cc=cc+tnext(k)*ex(k)
       if (k.eq.1.or.k.eq.nn) cc=cc/2
       ckk=ckk+cc
    enddo
    ckk=ckk*delta
+   deallocate(ex)
    return
    end subroutine convol
 
@@ -865,8 +906,10 @@ contains
    real(kr),parameter::c2=1.42e0_kr
    real(kr),parameter::c3=.2e0_kr
    real(kr),parameter::c4=10.e0_kr
-   real(kr),parameter::tiny=1.e-30_kr
+   real(kr)::tiny
    real(kr),parameter::zero=0
+
+   tiny=tinyph
 
    !--write heading for translational calculation
    call timer(time)
@@ -938,7 +981,11 @@ contains
             enddo
             s=s*delta/3
             if (s.lt.tiny) s=0
-            st=terps(sd,nbt,delta,be)
+            if (iext.eq.1.and.be.ge.delta*(nbt-1)) then
+               st=sdiff(al,be)
+            else
+               st=terps(sd,nbt,delta,be)
+            endif
             if (st.gt.zero) s=s+exp(-al*f0)*st
 
             !--store results
@@ -1121,6 +1168,56 @@ contains
    return
    end subroutine stable
 
+   real(kr) function sdiff(al,be)
+   !--------------------------------------------------------------------
+   ! Diffusion (or free-gas) scattering law at one value of beta, with
+   ! the expressions used to tabulate sd in stable.
+   ! Called by trans for beta beyond the tabulated kernel (iext=1).
+   !--------------------------------------------------------------------
+   use physics ! provides pi
+   real(kr)::al,be
+   real(kr)::d,c2,c3,c4,c5,c6,c7,c8,ex,wal
+   real(kr),parameter::quart=0.25e0_kr
+   real(kr),parameter::zero=0
+   real(kr),parameter::one=1
+
+   if (c.ne.zero) then
+      d=twt*c
+      c2=sqrt(c*c+quart)
+      c3=2*d*al
+      c4=c3*c3
+      c8=c2*c3/pi
+      c3=2*d*c*al
+      c6=sqrt(be*be+c4)
+      c7=c6*c2
+      if (c7.le.one) then
+         c5=c8*exp(c3+be/2)
+      else
+         ex=c3-c7+be/2
+         c5=c8*exp(ex)
+      endif
+      sdiff=c5*besk1(c7)/c6
+   else
+      wal=twt*al
+      ex=-(wal-be)**2/(4*wal)
+      sdiff=exp(ex)/sqrt(4*pi*wal)
+   endif
+   return
+   end function sdiff
+
+   real(kr) function qlag(x,x1,y1,x2,y2,x3,y3)
+   !--------------------------------------------------------------------
+   ! Quadratic (Lagrange) interpolation through three points.
+   ! Called by sbfill and sint (iext=1).
+   !--------------------------------------------------------------------
+   real(kr)::x,x1,y1,x2,y2,x3,y3
+
+   qlag=y1*(x-x2)*(x-x3)/((x1-x2)*(x1-x3))&
+       +y2*(x-x1)*(x-x3)/((x2-x1)*(x2-x3))&
+       +y3*(x-x1)*(x-x2)/((x3-x1)*(x3-x2))
+   return
+   end function qlag
+
    real(kr) function terps(sd,nsd,delta,be)
    !--------------------------------------------------------------------
    ! Interpolate in a table of S(alpha,beta) for a required beta.
@@ -1175,8 +1272,9 @@ contains
    real(kr)::sb(ndmax),s(ndmax),betan(nbeta)
    ! internals
    character(60)::strng
-   integer::i,j,idone
-   real(kr)::bmin,bmax,b,st,stm,arg,bet
+   integer::i,j,idone,jq
+   real(kr)::bmin,bmax,b,st,stm,arg,bet,sq
+   logical::qok
    real(kr),parameter::shade=1.00001e0_kr
    real(kr),parameter::slim=-225.e0_kr
    real(kr),parameter::zero=0
@@ -1234,6 +1332,30 @@ contains
             stm=log(s(j-1))
          endif
          sb(i)=st+(b-betan(j))*(stm-st)/(betan(j-1)-betan(j))
+         if (iext.eq.1) then
+            !--quadratic in ln(s), with the closer third node
+            jq=0
+            if (j.lt.nbeta) jq=j+1
+            if (j.gt.2) then
+               if (jq.eq.0) then
+                  jq=j-2
+               else if (b-betan(j-2).lt.betan(j+1)-b) then
+                  jq=j-2
+               endif
+            endif
+            if (jq.gt.0) then
+               if (s(j).gt.zero.and.s(j-1).gt.zero.and.s(jq).gt.zero) then
+                  sq=log(s(jq))
+                  if (jq.gt.j) then
+                     qok=abs(st-stm).le.qstep.and.abs(sq-st).le.qstep
+                  else
+                     qok=abs(stm-sq).le.qstep.and.abs(st-stm).le.qstep
+                  endif
+                  if (qok) sb(i)=qlag(b,betan(j-1),stm,betan(j),st,&
+                    betan(jq),sq)
+               endif
+            endif
+         endif
          if (bet.gt.zero) sb(i)=sb(i)-bet
          arg=sb(i)
          sb(i)=0
@@ -1338,14 +1460,19 @@ contains
    integer::jj,nn,jprt,nbx,maxbb,maxdd
    real(kr)::bdeln(50),eb(50),dbw(50),ar(50),dist(50)
    real(kr)::bzero,bplus(50),bminus(50)
-   real(kr),dimension(:),allocatable::betan,exb,sexpb
+   real(kr),dimension(:),allocatable::betan,exb,sexpb,sctpb
+   integer::nsctc
+   real(kr)::bsctc,fsctc
    real(kr),dimension(:),allocatable::bex,rdbex,sex
    real(kr),dimension(:),allocatable::bes,wts,ben,wtn
    real(kr),parameter::therm=.0253e0_kr
-   real(kr),parameter::small=1.e-8_kr
+   real(kr)::small
    real(kr),parameter::vsmall=1.e-10_kr
-   real(kr),parameter::tiny=1.e-20_kr
+   real(kr)::tiny
    real(kr),parameter::zero=0
+
+   small=smalld
+   tiny=tinyd
 
    !--write heading
    call timer(time)
@@ -1359,11 +1486,15 @@ contains
    allocate(betan(nbeta))
    allocate(exb(nbeta))
    allocate(sexpb(nbeta))
+   allocate(sctpb(nbeta))
+   nsctc=0
+   bsctc=huge(bsctc)
+   fsctc=0
    maxbb=2*nbeta+1
    allocate(bex(maxbb))
    allocate(rdbex(maxbb))
    allocate(sex(maxbb))
-   maxdd=500
+   maxdd=maxddx
    allocate(bes(maxdd))
    allocate(wts(maxdd))
    allocate(ben(maxdd))
@@ -1498,18 +1629,22 @@ contains
       !--sort the discrete lines
       !--and throw out the smallest ones
       nn=n-1
-      do i=2,n-1
-         do j=i+1,n
-            if (wts(j).ge.wts(i)) then
-               save=wts(j)
-               wts(j)=wts(i)
-               wts(i)=save
-               save=bes(j)
-               bes(j)=bes(i)
-               bes(i)=save
-            endif
+      if (iext.eq.1) then
+         if (n.gt.2) call sortdd(wts(2:n),bes(2:n),n-1)
+      else
+         do i=2,n-1
+            do j=i+1,n
+               if (wts(j).ge.wts(i)) then
+                  save=wts(j)
+                  wts(j)=wts(i)
+                  wts(i)=save
+                  save=bes(j)
+                  bes(j)=bes(i)
+                  bes(i)=save
+               endif
+            enddo
          enddo
-      enddo
+      endif
       i=0
       idone=0
       do while (i.lt.nn.and.idone.eq.0)
@@ -1536,15 +1671,39 @@ contains
       endif
 
       !--add the continuum part to the scattering law
+      if (iext.eq.1) then
+         do j=1,nbeta
+            sctpb(j)=0
+         enddo
+      endif
       do m=1,n
          do j=1,nbeta
             be=-betan(j)-bes(m)
             st=sint(be,bex,rdbex,sex,nbx,al,tbeta+twt,tbart,betan,&
               nbeta,maxbb)
             add=wts(m)*st
-            if (add.ge.tiny) sexpb(j)=sexpb(j)+add
+            if (add.ge.tiny) then
+               sexpb(j)=sexpb(j)+add
+               if (iext.eq.1.and.abs(be).gt.betan(nbeta))&
+                 sctpb(j)=sctpb(j)+add
+            endif
          enddo
       enddo
+
+      !--cells where the sct continuation of sint contributes
+      if (iext.eq.1) then
+         do j=1,nbeta
+            if (sctpb(j).gt.1.e-6_kr*sexpb(j)) then
+               nsctc=nsctc+1
+               if (betan(j).lt.bsctc) bsctc=betan(j)
+               if (sctpb(j)/sexpb(j).gt.fsctc) fsctc=sctpb(j)/sexpb(j)
+               if (iprint.eq.2) write(nsyso,'(&
+                 &''      sct contribution: alpha='',1p,e12.5,&
+                 &'' beta='',e12.5,'' fraction='',e10.3)')&
+                 al,betan(j),sctpb(j)/sexpb(j)
+            endif
+         enddo
+      endif
 
       !--add the delta functions to the scattering law
       !--delta(0.) is saved for the incoherent elastic
@@ -1654,7 +1813,20 @@ contains
    deallocate(sex)
    deallocate(rdbex)
    deallocate(bex)
+   if (iext.eq.1) then
+      if (nsctc.eq.0) then
+         write(nsyso,'(/'' cells with sct contributions'',&
+           &'' from beyond the beta grid: none'')')
+      else
+         write(nsyso,'(/'' cells with sct contributions'',&
+           &'' from beyond the beta grid:'',i8/&
+           &''    smallest beta ...................... '',1p,e12.4/&
+           &''    largest fraction ................... '',e12.4)')&
+           nsctc,bsctc,fsctc
+      endif
+   endif
    deallocate(sexpb)
+   deallocate(sctpb)
    deallocate(exb)
    deallocate(betan)
    return
@@ -1706,9 +1878,11 @@ contains
    real(kr),parameter::c31=0.00163801e0_kr
    real(kr),parameter::c32=0.01031555e0_kr
    real(kr),parameter::big=1.e10_kr
-   real(kr),parameter::tiny=1.e-30_kr
+   real(kr)::tiny
    real(kr),parameter::zero=0
    real(kr),parameter::one=1
+
+   tiny=tinyph
 
    !--compute bessi0
    y=x/c0
@@ -1795,6 +1969,57 @@ contains
    return
    end subroutine bfact
 
+   subroutine sortdd(w,b,n)
+   !--------------------------------------------------------------------
+   ! Sort the discrete lines w (weights) and b (positions) in
+   ! decreasing order of w (heapsort).
+   ! Called by discre (iext=1).
+   !--------------------------------------------------------------------
+   integer::n
+   real(kr)::w(n),b(n)
+   integer::i,ir,j,l
+   real(kr)::ww,bb
+
+   if (n.lt.2) return
+   l=n/2+1
+   ir=n
+   do
+      if (l.gt.1) then
+         l=l-1
+         ww=w(l)
+         bb=b(l)
+      else
+         ww=w(ir)
+         bb=b(ir)
+         w(ir)=w(1)
+         b(ir)=b(1)
+         ir=ir-1
+         if (ir.eq.1) then
+            w(1)=ww
+            b(1)=bb
+            return
+         endif
+      endif
+      i=l
+      j=l+l
+      do while (j.le.ir)
+         if (j.lt.ir) then
+            if (w(j).gt.w(j+1)) j=j+1
+         endif
+         if (ww.gt.w(j)) then
+            w(i)=w(j)
+            b(i)=b(j)
+            i=j
+            j=j+j
+         else
+            j=ir+1
+         endif
+      enddo
+      w(i)=ww
+      b(i)=bb
+   enddo
+   end subroutine sortdd
+
    subroutine bfill(bex,rdbex,nbx,betan,nbetan,maxbb)
    !--------------------------------------------------------------------
    ! Sets up the arrays bex and rdbex used by sint.
@@ -1877,8 +2102,9 @@ contains
    real(kr)::x,alph,wt,tbart
    real(kr)::bex(maxbb),rdbex(maxbb),sex(maxbb),betan(nbetan)
    ! internals
-   integer::k1,k2,k3,idone
-   real(kr)::sv,ex,ss1,ss3
+   integer::k1,k2,k3,idone,kq
+   real(kr)::sv,ex,ss1,ss3,ssq
+   logical::qok
    real(kr),parameter::slim=-225.e0_kr
    real(kr),parameter::zero=0
 
@@ -1889,7 +2115,11 @@ contains
       else
          ex=-(wt*alph-abs(x))**2/(4*wt*alph*tbart)
          if (x.gt.zero) ex=ex-x
-         sv=exp(ex)/(4*pi*wt*alph*tbart)
+         if (iext.eq.1) then
+            sv=exp(ex)/sqrt(4*pi*wt*alph*tbart)
+         else
+            sv=exp(ex)/(4*pi*wt*alph*tbart)
+         endif
       endif
       sint=sv
       return
@@ -1927,6 +2157,29 @@ contains
       ss3=log(sex(k3))
    endif
    ex=((bex(k3)-x)*ss1+(x-bex(k1))*ss3)*rdbex(k1)
+   if (iext.eq.1) then
+      !--quadratic in ln(sex), with the closer third node
+      kq=0
+      if (k3.lt.nbx) kq=k3+1
+      if (k1.gt.1) then
+         if (kq.eq.0) then
+            kq=k1-1
+         else if (x-bex(k1-1).lt.bex(k3+1)-x) then
+            kq=k1-1
+         endif
+      endif
+      if (kq.gt.0) then
+         if (sex(k1).gt.zero.and.sex(k3).gt.zero.and.sex(kq).gt.zero) then
+            ssq=log(sex(kq))
+            if (kq.gt.k3) then
+               qok=abs(ss3-ss1).le.qstep.and.abs(ssq-ss3).le.qstep
+            else
+               qok=abs(ss1-ssq).le.qstep.and.abs(ss3-ss1).le.qstep
+            endif
+            if (qok) ex=qlag(x,bex(k1),ss1,bex(k3),ss3,bex(kq),ssq)
+         endif
+      endif
+   endif
    sv=0
    if (ex.gt.slim) sv=exp(ex)
    sint=sv
