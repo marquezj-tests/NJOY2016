@@ -2098,7 +2098,7 @@ contains
    real(kr)::al,alp,waven,y,sk,swe,swo,wt,tbart,pj,Dm
    real(kr)::addbeta0,addbeta1,addbeta1a,addbeta1b,ap,apa,apb
    integer::i,j,k,l,jj,jjmax,jprt,nbx,maxbb,kk,kk2,sn_size
-   integer::law,nal,iprt,ipo,jt1,lp,jp,nbe
+   integer::law,nal,iprt,ipo,jt1,lp,jp,nbe,jpmax
    real(kr),dimension(:),allocatable::betan,exb
    real(kr),dimension(:),allocatable::bex,rdbex,sex,sexa,sexb
    real(kr),dimension(:,:),allocatable::sn
@@ -2181,6 +2181,10 @@ contains
       alp=wt*al
       waven=angst*sqrt(amassm*tev*ev*al)/hbar
       y=bp*waven
+      !--highest final rotational state: sum (2l+1) j_l(y)**2 = 1
+      !--needs l up to about y + 4 y**(1/3)
+      jpmax=max(9,int(y+4*y**(1.e0_kr/3)+6))
+      if (mod(jpmax,2).eq.0) jpmax=jpmax+1
       if (iprt.eq.1) write(nsyso,'(//i4,3x,''alpha='',f10.5)') nal,al
       sk=terpk(ska,nka,dka,waven)
       if (nokap.eq.1) sk=1
@@ -2256,7 +2260,7 @@ contains
 
                !--sum over even values of j-prime
                snlg=0
-               do lp=1,10,2
+               do lp=1,jpmax+1,2
                   jp=lp-1
                   betap=(-j*(j+1)+jp*(jp+1))*x/2
                   tmp=(2*jp+1)*pj*swe*4*sumh(j,jp,y)
@@ -2278,7 +2282,7 @@ contains
 
                !--sum over the odd values of j-prime
                snlk=0
-               do lp=2,10,2
+               do lp=2,jpmax+1,2
                   jp=lp-1
                   betap=(-j*(j+1)+jp*(jp+1))*x/2
                   tmp=(2*jp+1)*pj*swo*4*sumh(j,jp,y)
@@ -2346,7 +2350,7 @@ contains
 
                !--sum over even values of j-prime
                snlg=0
-               do lp=1,10,2
+               do lp=1,jpmax+1,2
                   jp=lp-1
                   betap=(-j*(j+1)+jp*(jp+1))*x/2
                   tmp=(2*jp+1)*pj*swe*4*sumh(j,jp,y)
@@ -2368,7 +2372,7 @@ contains
 
                !--sum over the odd values of j-prime
                snlk=0
-               do lp=2,10,2
+               do lp=2,jpmax+1,2
                   jp=lp-1
                   betap=(-j*(j+1)+jp*(jp+1))*x/2
                   tmp=(2*jp+1)*pj*swo*4*sumh(j,jp,y)
@@ -2524,7 +2528,7 @@ contains
    integer::j,jp
    real(kr)::y
    ! internals
-   integer::imk,ipk1,mpk,ipk,n,n1
+   integer::imk,ipk1,ipk,n,n1
    real(kr)::sum1,sum2
 
    if (j.eq.0) then
@@ -2535,12 +2539,7 @@ contains
       sum1=0
       imk=iabs(j-jp)+1
       ipk1=j+jp+1
-      mpk=ipk1-imk
-      if (mpk.le.9) then
-         ipk=ipk1
-      else
-         ipk=imk+9
-      endif
+      ipk=ipk1
       do n=imk,ipk
          n1=n-1
          sum1=sum1+(sjbes(n1,y)*cn(j,jp,n1))**2
