@@ -2096,11 +2096,11 @@ contains
    real(kr)::snlg,betap,bn,ex,add,snlk,up,down,snorm
    real(kr)::sum0,bel,ff1,ff2,ff1l,ff2l,tmp,total,be
    real(kr)::al,alp,waven,y,sk,swe,swo,wt,tbart,pj,Dm
-   real(kr)::addbeta0,addbeta1,addbeta1a,addbeta1b,ap
+   real(kr)::addbeta0,addbeta1,addbeta1a,addbeta1b,ap,apa,apb
    integer::i,j,k,l,jj,jjmax,jprt,nbx,maxbb,kk,kk2,sn_size
    integer::law,nal,iprt,ipo,jt1,lp,jp,nbe
    real(kr),dimension(:),allocatable::betan,exb
-   real(kr),dimension(:),allocatable::bex,rdbex,sex
+   real(kr),dimension(:),allocatable::bex,rdbex,sex,sexa,sexb
    real(kr),dimension(:,:),allocatable::sn
    real(kr),parameter::pmass=1.6726231e-24_kr
    real(kr),parameter::dmass=3.343586e-24_kr
@@ -2133,6 +2133,8 @@ contains
    allocate(sex(maxbb))
    sn_size = 2*nbeta-1
    allocate(sn(nalpha,sn_size))
+   allocate(sexa(maxbb))
+   allocate(sexb(maxbb))
 
    !--set up constants
    tev=bk*abs(temp)
@@ -2316,8 +2318,22 @@ contains
          !    results for positive beta go into ssp
          !    results for negative beta go into ssm
          jjmax=2*nbeta-1
-         do jj=1,jjmax
          call exts(ssm(1,nal,itemp),sex,exb,betan,nbeta,maxbb)
+         if (nsk.eq.2) then
+            !--Skold: S at alpha/S(kappa), interpolated between the
+            !--two tabulated alpha values that bracket it
+            ap=al/sk
+            do kk2=1,nalpha
+               kk=kk2
+               if (ap.lt.alpha(kk2)*sc/arat) exit
+            enddo
+            if (kk.eq.1) kk=2
+            apa=alpha(kk-1)*sc/arat
+            apb=alpha(kk)*sc/arat
+            call exts(ssm(1,kk-1,itemp),sexa,exb,betan,nbeta,maxbb)
+            call exts(ssm(1,kk,itemp),sexb,exb,betan,nbeta,maxbb)
+         endif
+         do jj=1,jjmax
             if (jj.lt.nbeta) k=nbeta-jj+1
             if (jj.ge.nbeta) k=jj-nbeta+1
             be=betan(k)
@@ -2392,30 +2408,24 @@ contains
 !
 ! Compute the S_out term using Vineyard approximation
 !            
-               addbeta0=sint(be,bex,rdbex,sex,nbx,al,wt,tbart,beta,nbeta, &
-       maxbb)                                                                   
-               sn(nal,jj)=sn(nal,jj)+  &
-       (sk-1.d0)*sjbes(0,y)**2*addbeta0*Dm 
+               addbeta0=sint(be,bex,rdbex,sex,nbx,al,wt,tbart,betan,nbeta,&
+                 maxbb)
+               sn(nal,jj)=sn(nal,jj)+(sk-1)*sjbes(0,y)**2*addbeta0*Dm
             else if (nsk.eq.2) then
 !
 ! Compute the S_out term using Skold approximation
 !            
-               addbeta0=sint(be,bex,rdbex,sex,nbx,al,wt,tbart,beta,nbeta, &          
-                maxbb)
-               ap=al/sk
-               do kk2=1,nalpha
-                  kk=kk2
-                  if (ap.lt.alpha(kk2)) exit
-               enddo
-               if (kk.eq.1) kk=2
-               call exts(ssm(1,kk-1,itemp),sex,exb,beta,nbeta,maxbb)            
-               addbeta1a=sint(be,bex,rdbex,sex,nbx,alpha(kk-1), &
-                wt,tbart,beta,nbeta, maxbb)
-               call exts(ssm(1,kk,itemp),sex,exb,beta,nbeta,maxbb)            
-               addbeta1b=sint(be,bex,rdbex,sex,nbx,alpha(kk), &
-                wt,tbart,beta,nbeta, maxbb)            
-               call terp1(alpha(kk-1),addbeta1a, alpha(kk),addbeta1b, &
-                ap, addbeta1, 5)                 
+               addbeta0=sint(be,bex,rdbex,sex,nbx,al,wt,tbart,betan,nbeta,&
+                 maxbb)
+               addbeta1a=sint(be,bex,rdbex,sexa,nbx,apa,wt,tbart,betan,&
+                 nbeta,maxbb)
+               addbeta1b=sint(be,bex,rdbex,sexb,nbx,apb,wt,tbart,betan,&
+                 nbeta,maxbb)
+               if (addbeta1a.gt.zero.and.addbeta1b.gt.zero) then
+                  call terp1(apa,addbeta1a,apb,addbeta1b,ap,addbeta1,5)
+               else
+                  call terp1(apa,addbeta1a,apb,addbeta1b,ap,addbeta1,2)
+               endif
                addbeta1=addbeta1*sk
                sn(nal, jj)=sn(nal,jj)+ &
                 (addbeta1-addbeta0)*sjbes(0,y)**2*Dm
@@ -2434,6 +2444,8 @@ contains
       enddo
 
    do nal=1,nalpha   
+      iprt=mod(nal-1,naint)+1
+      if (nal.eq.nalpha) iprt=1
       !--record the results
       if (iprt.eq.1) write(nsyso,&
         '(/4x,'' beta'',7x,''s(alpha,beta)'',7x,&
@@ -2481,6 +2493,8 @@ contains
    deallocate(exb)
    deallocate(betan)
    deallocate(sn)
+   deallocate(sexa)
+   deallocate(sexb)
    return
    end subroutine coldh
 
