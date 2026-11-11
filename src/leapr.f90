@@ -44,6 +44,10 @@ module leapm
    real(kr)::arat
    real(kr)::tev,deltab
    real(kr),dimension(:,:,:),allocatable::ssm,ssp
+   ! s before the discrete oscillator, for the rotation-vibration
+   ! lines in coldh, and the corresponding effective temperature ratio
+   real(kr),dimension(:,:),allocatable::ssm0
+   real(kr)::tbar0
    real(kr),dimension(:),allocatable::dwpix,dwp1
    real(kr),dimension(:),allocatable::tempf,tempf1
 
@@ -402,6 +406,14 @@ contains
          if (twt.gt.zero) call trans(itemp)
 
          !--discrete oscillators, if any
+         !--(granada model for h2/d2: keep s without the oscillator,
+         !--coldh couples the oscillator to the rotor)
+         if (ncold.gt.0.and.nsk.gt.0.and.nd.eq.1) then
+            if (allocated(ssm0)) deallocate(ssm0)
+            allocate(ssm0(nbeta,nalpha))
+            ssm0=ssm(:,:,itemp)
+            tbar0=tempf(itemp)/tempr(itemp)
+         endif
          if (nd.gt.0) call discre(itemp)
 
          !--check for special hydrogen and deuterium options
@@ -458,6 +470,7 @@ contains
    deallocate(tempr)
    deallocate(p1)
    deallocate(ssm)
+   if (allocated(ssm0)) deallocate(ssm0)
    deallocate(scr)
    if (allocated(ssp)) deallocate(ssp)
    deallocate(alpha)
@@ -2136,6 +2149,10 @@ contains
    ! Neef (Julich).  The approach of using solid/diffusive modes
    ! with discrete rotations is based on the work of Keinert and
    ! Sax.  Note that the final S(alpha,beta) is not symmetric in beta.
+   ! Granada model (nsk>0) with one discrete oscillator: the oscillator
+   ! is the bond vibration, and its lines are coupled to the rotational
+   ! lines through the bond orientation (rvweights); this keeps the
+   ! sum rules of the struck proton at large momentum transfer.
    !--------------------------------------------------------------------
    use physics ! provides pi,bk,hbar,ev
    use mainio  ! provides nsyso
@@ -2152,6 +2169,13 @@ contains
    real(kr)::addbeta0,addbeta1,addbeta1a,addbeta1b,ap,apa,apb
    integer::i,j,k,l,jj,jjmax,jprt,nbx,maxbb,kk,kk2,sn_size
    integer::law,nal,iprt,ipo,jt1,lp,jp,nbe,jpmax
+   ! rotation-vibration lines (oscillator coupled to the rotor)
+   logical::rv
+   integer::lmx,nmx,nv,ll,nln,mln
+   real(kr)::bvib,lam3,fnorm,wsum,wmax,sh,wl,cnl(0:400)
+   real(kr),dimension(:,:),allocatable::fl2
+   real(kr),dimension(:),allocatable::sex0,bln,wln
+   integer,parameter::lcap=400,ncap=400
    real(kr),dimension(:),allocatable::betan,exb
    real(kr),dimension(:),allocatable::bex,rdbex,sex,sexa,sexb
    real(kr),dimension(:,:),allocatable::sn
@@ -2188,6 +2212,7 @@ contains
    allocate(sn(nalpha,sn_size))
    allocate(sexa(maxbb))
    allocate(sexb(maxbb))
+   allocate(sex0(maxbb))
 
    !--set up constants
    tev=bk*abs(temp)
@@ -2382,6 +2407,77 @@ contains
             call exts(ssm(1,kk-1,itemp),sexa,exb,betan,nbeta,maxbb)
             call exts(ssm(1,kk,itemp),sexb,exb,betan,nbeta,maxbb)
          endif
+         !--rotation-vibration lines: the intramolecular oscillator
+         !--depends on the bond orientation u (displacement along the
+         !--bond), so j_L(y)**2 in sumh becomes
+         !--|1/2 int exp(iyu) g_n(u) P_L(u) du|**2 for n quanta,
+         !--g_n(u)=exp(-lam3 u**2/2) (sqrt(lam3) u)**n/sqrt(n!),
+         !--lam3=3 alpha w/beta_v; applied to S without the oscillator
+         rv=allocated(ssm0)
+         if (rv) then
+            call exts(ssm0(1,nal),sex0,exb,betan,nbeta,maxbb)
+            ipo=1
+            if (law.eq.2.or.law.eq.5) ipo=2
+            jt1=2*jterm
+            if (ipo.eq.2) jt1=jt1+1
+            bvib=bdel(1)/tev
+            lam3=3*al*adel(1)/bvib
+            nmx=min(ncap,int(lam3+10*sqrt(lam3)+10))
+            lmx=min(lcap,int(y+4*y**(1.e0_kr/3)+3*sqrt(lam3)+12)+jt1)
+            allocate(fl2(0:lmx,0:nmx))
+            call rvweights(y,lam3,lmx,nmx,fl2)
+            fnorm=0
+            do nv=0,nmx
+               do ll=0,lmx
+                  fnorm=fnorm+(2*ll+1)*fl2(ll,nv)
+               enddo
+            enddo
+            mln=(jt1+1)*(lmx+1)*(nmx+1)
+            if (allocated(bln)) deallocate(bln)
+            if (allocated(wln)) deallocate(wln)
+            allocate(bln(mln))
+            allocate(wln(mln))
+            nln=0
+            do l=ipo,jt1,2
+               j=l-1
+               call bt(j,pj,x)
+               do jp=0,lmx-j
+                  do ll=abs(j-jp),j+jp
+                     cnl(ll)=cn(j,jp,ll)**2
+                  enddo
+                  betap=(-j*(j+1)+jp*(jp+1))*x/2
+                  if (mod(jp,2).eq.0) then
+                     wl=(2*jp+1)*pj*swe*4
+                  else
+                     wl=(2*jp+1)*pj*swo*4
+                  endif
+                  do nv=0,nmx
+                     sh=0
+                     do ll=abs(j-jp),j+jp
+                        sh=sh+fl2(ll,nv)*cnl(ll)
+                     enddo
+                     nln=nln+1
+                     bln(nln)=betap+nv*bvib
+                     wln(nln)=wl*sh
+                  enddo
+               enddo
+            enddo
+            deallocate(fl2)
+            !--drop negligible lines
+            wsum=sum(wln(1:nln))
+            wmax=maxval(wln(1:nln))
+            k=0
+            do l=1,nln
+               if (wln(l).gt.1.e-13_kr*wmax) then
+                  k=k+1
+                  bln(k)=bln(l)
+                  wln(k)=wln(l)
+               endif
+            enddo
+            nln=k
+            if (iprt.eq.1) write(nsyso,'(5x,''rotation-vibration lines'',i8,&
+              &'' total'',f10.6,'' norm'',f10.6)') nln,wsum,fnorm
+         endif
          do jj=1,jjmax
             if (jj.lt.nbeta) k=nbeta-jj+1
             if (jj.ge.nbeta) k=jj-nbeta+1
@@ -2389,6 +2485,14 @@ contains
             if (jj.lt.nbeta) be=-be
             sn(nal,jj)=0
             total=0
+            if (rv) then
+               do l=1,nln
+                  add=sint(be+bln(l),bex,rdbex,sex0,nbx,al,wt,tbar0,&
+                    betan,nbeta,maxbb)
+                  sn(nal,jj)=sn(nal,jj)+wln(l)*add
+               enddo
+               go to 300
+            endif
 
             !--loop over all oscillators
             ! para-h2: j=0,2,....; ortho-h2: j=1,3,....
@@ -2453,6 +2557,7 @@ contains
             endif
 
             !--S_out term
+  300       continue
             if (nsk.eq.1) then
                !--Vineyard approximation
                addbeta0=sint(be,bex,rdbex,sex,nbx,al,wt,tbart,betan,nbeta,&
@@ -2543,8 +2648,93 @@ contains
    deallocate(sn)
    deallocate(sexa)
    deallocate(sexb)
+   deallocate(sex0)
+   if (allocated(bln)) deallocate(bln)
+   if (allocated(wln)) deallocate(wln)
    return
    end subroutine coldh
+
+   subroutine rvweights(y,lam3,lmx,nmx,fl2)
+   !--------------------------------------------------------------------
+   ! Rotation-vibration weights for coldh:
+   ! fl2(L,n)=|1/2 int_-1^1 exp(i y u) g_n(u) P_L(u) du|**2,
+   ! g_n(u)=exp(-lam3 u**2/2) (sqrt(lam3) u)**n/sqrt(n!),
+   ! by Gauss-Legendre quadrature. sum (2L+1) fl2 = 1.
+   !--------------------------------------------------------------------
+   integer::lmx,nmx
+   real(kr)::y,lam3,fl2(0:lmx,0:nmx)
+   integer::nq,k,l,n
+   real(kr)::re,im,sl
+   real(kr),dimension(:),allocatable::xg,wg,c,s,g
+   real(kr),dimension(:,:),allocatable::pl
+
+   nq=int((y+lmx+nmx+lam3)/2)+40
+   allocate(xg(nq),wg(nq),c(nq),s(nq),g(nq),pl(0:lmx,nq))
+   call gauleg(nq,xg,wg)
+   do k=1,nq
+      pl(0,k)=1
+      if (lmx.ge.1) pl(1,k)=xg(k)
+      do l=2,lmx
+         pl(l,k)=((2*l-1)*xg(k)*pl(l-1,k)-(l-1)*pl(l-2,k))/l
+      enddo
+      c(k)=wg(k)*cos(y*xg(k))/2
+      s(k)=wg(k)*sin(y*xg(k))/2
+      g(k)=exp(-lam3*xg(k)**2/2)
+   enddo
+   sl=sqrt(lam3)
+   do n=0,nmx
+      if (n.gt.0) then
+         do k=1,nq
+            g(k)=g(k)*sl*xg(k)/sqrt(real(n,kr))
+         enddo
+      endif
+      do l=0,lmx
+         re=0
+         im=0
+         do k=1,nq
+            re=re+c(k)*g(k)*pl(l,k)
+            im=im+s(k)*g(k)*pl(l,k)
+         enddo
+         fl2(l,n)=re*re+im*im
+      enddo
+   enddo
+   deallocate(xg,wg,c,s,g,pl)
+   return
+   end subroutine rvweights
+
+   subroutine gauleg(n,x,w)
+   !--------------------------------------------------------------------
+   ! Gauss-Legendre nodes and weights on [-1,1].
+   !--------------------------------------------------------------------
+   use physics ! provides pi
+   integer::n
+   real(kr)::x(n),w(n)
+   integer::i,j,m
+   real(kr)::z,z1,p1,p2,p3,pp
+
+   m=(n+1)/2
+   do i=1,m
+      z=cos(pi*(i-0.25e0_kr)/(n+0.5e0_kr))
+      z1=z+1
+      do while (abs(z-z1).gt.1.e-15_kr)
+         p1=1
+         p2=0
+         do j=1,n
+            p3=p2
+            p2=p1
+            p1=((2*j-1)*z*p2-(j-1)*p3)/j
+         enddo
+         pp=n*(z*p1-p2)/(z*z-1)
+         z1=z
+         z=z1-p1/pp
+      enddo
+      x(i)=-z
+      x(n+1-i)=z
+      w(i)=2/((1-z*z)*pp*pp)
+      w(n+1-i)=w(i)
+   enddo
+   return
+   end subroutine gauleg
 
    subroutine bt(j,pj,x)
    !--------------------------------------------------------------------
