@@ -1735,9 +1735,9 @@ contains
    real(kr)::x,dwc,betai
    real(kr)::bzero,bplus(50),bminus(50)
    ! internals
-   integer::i,imax,j
+   integer::i,imax,j,k
    real(kr)::bn(50)
-   real(kr)::y,u,v,bessi0,bessi1,rat,arg
+   real(kr)::y,u,v,bessi0,bessi1,rat,arg,lx,lg,term,ssum,lnb,lnt
    real(kr),parameter::c0=3.75e0_kr
    real(kr),parameter::c1=1.e0_kr
    real(kr),parameter::c2=3.5156229e0_kr
@@ -1798,63 +1798,65 @@ contains
       bessi1=bessi1/sqrt(x)
    endif
 
-   !--generate higher orders by reverse recursion
    imax=50
-   bn(imax)=0
-   bn(imax-1)=1
-   i=imax-1
-   do while (i.gt.1)
-      bn(i-1)=bn(i+1)+i*(2/x)*bn(i)
-      i=i-1
-      if (bn(i).ge.big) then
-         do j=i,imax
-            bn(j)=bn(j)/big
-         enddo
-      endif
-   enddo
-   rat=bessi1/bn(1)
-   do i=1,imax
-      bn(i)=bn(i)*rat
-      if (bn(i).lt.tiny) bn(i)=0
-   enddo
-
-   !--apply exponential terms to bessel functions
    if (y.le.one) then
+      !--small argument: ln I_n(x) from its power series, combined
+      !--with the exponential terms in log space (the reverse recursion
+      !--overflows for tiny x, e.g. a high-energy oscillator at low T)
       bzero=bessi0*exp(-dwc)
+      lnt=log(tiny)
+      lx=log(x/2)
+      lg=0
       do i=1,imax
-         bminus(i)=0
+         lg=lg+log(real(i,kr))
+         term=1
+         ssum=1
+         k=0
+         do while (term.gt.1.e-17_kr*ssum.and.k.lt.200)
+            k=k+1
+            term=term*(x*x/4)/(k*(i+k))
+            ssum=ssum+term
+         enddo
+         lnb=i*lx-lg+log(ssum)
          bplus(i)=0
-         if (bn(i).ne.zero) then
-            arg=-dwc-i*betai/2
-            bplus(i)=0
-            bplus(i)=exp(arg)*bn(i)
-            if (bplus(i).lt.tiny) bplus(i)=0
-            bminus(i)=0
-            arg=-dwc+i*betai/2
-            bminus(i)=exp(arg)*bn(i)
-            if (bminus(i).lt.tiny) bminus(i)=0
-         else
-            bplus(i)=0
-            bminus(i)=0
-         endif
+         arg=-dwc-i*betai/2+lnb
+         if (arg.gt.lnt) bplus(i)=exp(arg)
+         bminus(i)=0
+         arg=-dwc+i*betai/2+lnb
+         if (arg.gt.lnt) bminus(i)=exp(arg)
       enddo
    else
+      !--generate higher orders by reverse recursion
+      bn(imax)=0
+      bn(imax-1)=1
+      i=imax-1
+      do while (i.gt.1)
+         bn(i-1)=bn(i+1)+i*(2/x)*bn(i)
+         i=i-1
+         if (bn(i).ge.big) then
+            do j=i,imax
+               bn(j)=bn(j)/big
+            enddo
+         endif
+      enddo
+      rat=bessi1/bn(1)
+      do i=1,imax
+         bn(i)=bn(i)*rat
+         if (bn(i).lt.tiny) bn(i)=0
+      enddo
+
+      !--apply exponential terms to bessel functions
       bzero=bessi0*exp(-dwc+x)
       do i=1,imax
          bminus(i)=0
          bplus(i)=0
          if (bn(i).ne.zero) then
-            bplus(i)=0
             arg=-dwc-i*betai/2+x
             bplus(i)=exp(arg)*bn(i)
             if (bplus(i).lt.tiny) bplus(i)=0
-            bminus(i)=0
             arg=-dwc+i*betai/2+x
             bminus(i)=exp(arg)*bn(i)
             if (bminus(i).lt.tiny) bminus(i)=0
-         else
-            bplus(i)=0
-            bminus(i)=0
          endif
       enddo
    endif
