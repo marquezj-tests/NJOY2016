@@ -2183,7 +2183,6 @@ contains
    real(kr),parameter::dmass=3.343586e-24_kr
    real(kr),parameter::deh=0.0147e0_kr
    real(kr),parameter::ded=0.0074e0_kr
-   real(kr),parameter::dhh=0.7414e0_kr
    real(kr),parameter::sampch=0.356e0_kr
    real(kr),parameter::sampcd=0.668e0_kr
    real(kr),parameter::sampih=2.526e0_kr
@@ -2236,11 +2235,12 @@ contains
       sampi=sampih
    endif
    if (nsk.ne.0) then
-      !--Granada model: scattering lengths from spr and cfrac,
-      !--and the H-H (D-D) distance
+      !--Granada model: scattering lengths from spr and cfrac
       sampc=sqrt(cfrac*spr/(4*pi))/(awr/(1+awr))
       sampi=sqrt((1-cfrac)*spr/(4*pi))/(awr/(1+awr))
-      bp=dhh/2
+      !--the h-h (d-d) distance in bp stays the one consistent with the
+      !--rotational energy (de=2 hbar**2/(m d**2)), so that rotation
+      !--takes 1/3 of the recoil (first-moment sum rule)
    endif
    wt=twt+tbeta
    if (nsk.eq.0) then
