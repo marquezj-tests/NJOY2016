@@ -835,39 +835,76 @@ contains
    real(kr)::delta,ckk
    real(kr)::t1(n1),tlast(nl),tnext(nn)
    ! internals
-   integer::j,k,i1,i2,m
-   real(kr)::f1,f2,cc,be
+   integer::j,k,m,nf,nz,kmin,kmax,ka,kb
+   real(kr)::cc,be,w,hf,e
    real(kr),dimension(:),allocatable::ex
    real(kr),parameter::tiny=1.e-200_kr
    real(kr),parameter::zero=0
+   real(kr),parameter::half=0.5e0_kr
 
-   !--table of exp(-m*delta), evaluated as in the loops below
-   allocate(ex(max(n1,nn)+1))
-   do m=0,max(n1,nn)
+   !--range of k with a nonzero result: tlast is zero outside
+   !--[nf,nz], so tnext(k)=0 for k<nf-n1+1 and k>nz+n1-1
+   nf=0
+   nz=0
+   do k=1,nl
+      if (tlast(k).ne.zero) then
+         if (nf.eq.0) nf=k
+         nz=k
+      endif
+   enddo
+   kmin=1
+   kmax=0
+   if (nf.gt.0) then
+      kmin=max(1,nf-n1+1)
+      kmax=min(nn,nz+n1-1)
+   endif
+
+   !--table of exp(-m*delta), up to the largest index used
+   allocate(ex(max(n1,kmax)+1))
+   do m=0,max(n1,kmax)
       be=m*delta
       ex(m+1)=exp(-be)
    enddo
 
-   ckk=0
    do k=1,nn
       tnext(k)=0
+   enddo
+   if (nf.gt.0) then
+      !--j outside, k inside (contiguous, vectorizable); each tnext(k)
+      !--still accumulates the terms in increasing j, as before.
+      !--for fixed j the k range splits into segments without branches
+      !--(nl.ge.n1, so tlast(j-k+1) always exists for k<j):
+      !--  f1=tlast(k+j-1)*ex(j) for k.le.nl-j+1
+      !--  f2=tlast(j-k+1)*ex(j-k+1) for k.lt.j, tlast(k-j+1) for
+      !--     j.le.k.le.nl+j-1
       do j=1,n1
-         i1=k+j-2
-         i2=k-j
-         f1=0
          if (t1(j).gt.zero) then
-            if (i1+1.le.nl) f1=tlast(i1+1)*ex(j)
-            f2=0
-            if (i2.ge.0.and.i2+1.le.nl) then
-               f2=tlast(i2+1)
-            else if (i2.lt.0.and.1-i2.le.nl) then
-               f2=tlast(1-i2)*ex(1-i2)
-            endif
-            cc=t1(j)*(f1+f2)
-            if (j.eq.1.or.j.eq.n1) cc=cc/2
-            tnext(k)=tnext(k)+cc
+            w=t1(j)
+            hf=1
+            if (j.eq.1.or.j.eq.n1) hf=half
+            e=ex(j)
+            ka=nl-j+1
+            kb=nl+j-1
+            !--k.lt.j
+            do k=kmin,min(kmax,j-1,ka)
+               tnext(k)=tnext(k)+w*(tlast(k+j-1)*e+tlast(j-k+1)*ex(j-k+1))*hf
+            enddo
+            do k=max(kmin,ka+1),min(kmax,j-1)
+               tnext(k)=tnext(k)+w*(tlast(j-k+1)*ex(j-k+1))*hf
+            enddo
+            !--k.ge.j
+            do k=max(kmin,j),min(kmax,kb,ka)
+               tnext(k)=tnext(k)+w*(tlast(k+j-1)*e+tlast(k-j+1))*hf
+            enddo
+            do k=max(kmin,j,ka+1),min(kmax,kb)
+               tnext(k)=tnext(k)+w*tlast(k-j+1)*hf
+            enddo
          endif
       enddo
+   endif
+   !--normalization check; tnext(k)=0 outside [kmin,kmax]
+   ckk=0
+   do k=kmin,kmax
       tnext(k)=tnext(k)*delta
       if (tnext(k).lt.tiny) tnext(k)=0
       cc=tnext(k)
