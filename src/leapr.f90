@@ -134,6 +134,10 @@ contains
    !    ntempr  number of temperatures (def=1)
    !    iprint  print control (0=min, 1=more, 2=most, def=1)
    !    nphon   phonon-expansion order (def=100)
+   !            0 = set for each temperature from the poisson tail
+   !            of the expansion: nphon=mu+6*sqrt(mu)+10, with
+   !            mu=lambda*alpha_max (debye-waller lambda of the
+   !            continuous spectrum, largest alpha at that temperature)
    !
    ! card 4 - endf output control
    !    mat     endf mat number
@@ -485,11 +489,11 @@ contains
    real(kr)::temp
    integer::itemp,np,maxn
    ! internals
-   integer::i,j,k,n,npn,npl,iprt,jprt
+   integer::i,j,k,n,npn,npl,iprt,jprt,nord
    integer,allocatable,dimension(:)::maxt
    character(3)::tag
    real(kr)::al,be,bel,ex,exx,st,add,sc,alp,alw,ssct,ckk,time
-   real(kr)::ff0,ff1,ff2,ff1l,ff2l,sum0,sum1
+   real(kr)::ff0,ff1,ff2,ff1l,ff2l,sum0,sum1,pmu
    real(kr),dimension(:),allocatable::p,tlast,tnow,xa
    real(kr),parameter::therm=0.0253e0_kr
    real(kr),parameter::tiny=1.e-200_kr
@@ -499,17 +503,27 @@ contains
    !--write heading
    write(nsyso,'(/'' solid-type contributions to scattering law'')')
 
-   !--allocate temporary arrays
-   allocate(p(np1))
-   allocate(tlast(nphon*np1))
-   allocate(tnow(nphon*np1))
-   allocate(xa(nalpha))
-   allocate(maxt(nbeta))
-
    !--calculate various parameters for this temperature
+   allocate(p(np1))
    call start(itemp,p,np,deltab,tev)
    sc=1
    if (lat.eq.1) sc=therm/tev
+
+   !--phonon-expansion order: from the input, or (maxn=0) from the
+   !--poisson tail of the expansion at the largest alpha
+   nord=maxn
+   if (maxn.eq.0) then
+      pmu=f0*alpha(nalpha)*sc/arat
+      nord=int(pmu+6*sqrt(pmu)+10)
+      write(nsyso,'(/'' phonon-expansion order from the poisson tail'',&
+        &i8,''  (lambda*alpha_max ='',1p,e12.4,'')'')') nord,pmu
+   endif
+
+   !--allocate temporary arrays
+   allocate(tlast(nord*np1))
+   allocate(tnow(nord*np1))
+   allocate(xa(nalpha))
+   allocate(maxt(nbeta))
 
    !--start the phonon expansion sum with t1
    do i=1,np
@@ -538,12 +552,12 @@ contains
    if (iprint.eq.2) then
       write(nsyso,'(/'' normalization check for phonon expansion'')')
    endif
-   if (maxn.gt.maxnphon) then
+   if (nord.gt.maxnphon) then
       call timer(time)
       write(nsyse,'(/'' performing phonon expansion sum'',&
             &37x,f8.1,''s'')'),time
    endif
-   do n=2,maxn
+   do n=2,nord
       npn=np+npl-1
       call convol(p,tlast,tnow,np,npl,npn,deltab,ckk)
       if (iprint.eq.2) write(nsyso,'(5x,i5,f12.5)') n,ckk
@@ -559,7 +573,7 @@ contains
             add=st*exx
             if (add.lt.tiny) add=0
             ssm(k,j,itemp)=ssm(k,j,itemp)+add
-            if (ssm(k,j,itemp).ne.zero.and.n.ge.maxn) then
+            if (ssm(k,j,itemp).ne.zero.and.n.ge.nord) then
             if (add.gt.ssm(k,j,itemp)/1000.and.j.lt.maxt(k)) maxt(k)=j
             endif
          enddo
@@ -572,10 +586,10 @@ contains
          call timer(time)
          write(nsyse,'(2x,i5,'' of '',i5,&
                &'' loops done for phonon expansion sum'',17x,f8.1,''s'')')&
-               &n,maxn,time
+               &n,nord,time
       endif
    enddo
-   if (maxn.gt.maxnphon) then
+   if (nord.gt.maxnphon) then
       call timer(time)
       write(nsyse,'(/'' done with phonon expansion sum'',&
             &38x,f8.1,''s'')'),time
